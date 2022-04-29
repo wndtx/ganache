@@ -1,77 +1,73 @@
-import { bufferToBigInt, BUFFER_EMPTY } from "../../utils";
+import { bufferToBigInt } from "../../utils/buffer-to-bigint";
 import { BaseJsonRpcType } from "./json-rpc-base-types";
-// TODO(perf): rewrite this stuff since it isn't really caching anything
+const BUFFER_EMPTY = Buffer.alloc(0);
+
 export class Quantity extends BaseJsonRpcType {
   _nullable: boolean = false;
-  public static from(
-    value: number | bigint | string | Buffer,
-    nullable = false
-  ) {
-    if (value instanceof Quantity) return value;
-    const q = new Quantity(value);
-    q._nullable = nullable;
-    return q;
-  }
-  public toString(): string | null {
-    // TODO(perf): memoize this stuff
-    if (Buffer.isBuffer(this.value)) {
-      let val = this.value.toString("hex").replace(/^(?:0+(.+?))?$/, "$1");
 
-      if (val === "") {
-        if (this._nullable) {
-          return null;
-        }
-        // RPC Quantities must represent `0` as `0x0`
-        return "0x0";
-      }
-      return `0x${val}`;
-    } else if (this.value == null) {
-      return "0x";
-    } else {
-      return super.toString();
+  public static from(value: number | bigint | string | Buffer, nullable = false) {
+    if (value instanceof Quantity) return value;
+    return new Quantity(value, nullable);
+  }
+
+  constructor(value: number | bigint | string | Buffer, nullable?: boolean) {
+    super(value);
+    this._nullable = nullable;
+  }
+
+  public toString(): string | null {
+    if (this.value == null) {
+      return this._nullable? null : "0x";
     }
+
+    let val = this.value.toString("hex").replace(/^0*/, "");
+
+    if (val === "") {
+      // RPC Quantities must represent `0` as `0x0`
+      return this._nullable ? null : "0x0";
+    }
+    return `0x${val}`;
   }
   public toBuffer(): Buffer {
-    // 0x0, 0x00, 0x000, etc should return BUFFER_EMPTY
-    if (Buffer.isBuffer(this.value)) {
-      // trim zeros from start
-      let best = 0;
-      for (best = 0; best < this.value.length; best++) {
-        if (this.value[best] !== 0) break;
-      }
-      if (best > 0) {
-        return this.value.slice(best);
-      } else {
-        return this.value;
-      }
-    } else if (typeof this.value === "string") {
-      let val = this.value.slice(2).replace(/^(?:0+(.+?))?$/, "$1");
-      if (val === "" || val === "0") {
-        return BUFFER_EMPTY;
-      }
-    } else if (this.value === 0 || this.value === 0n) {
+    if (this.value == null) {
       return BUFFER_EMPTY;
     }
 
-    return super.toBuffer();
-  }
-  public toBigInt(): bigint | null {
-    const value = this.value;
-
-    // TODO(perf): memoize this stuff
-    if (Buffer.isBuffer(value)) {
-      const bigInt = bufferToBigInt(value);
-      return bigInt == null ? (this._nullable ? null : 0n) : bigInt;
+    let firstNonZeroByte = 0;
+    for (firstNonZeroByte = 0; firstNonZeroByte < this.value.length; firstNonZeroByte++) {
+      if (this.value[firstNonZeroByte] !== 0) break;
+    }
+    if (firstNonZeroByte > 0) {
+      return this.value.slice(firstNonZeroByte);
     } else {
-      return value == null ? (this._nullable ? null : 0n) : BigInt(value);
+      return this.value;
     }
   }
-  public toNumber() {
-    // TODO(perf): memoize this stuff
-    return typeof this.value === "number"
-      ? this.value
-      : Number(this.toBigInt());
+
+  public toBigInt(): bigint | null {
+    if (this.value == null || this.value.length === 0) {
+      return this._nullable ? null : 0n;
+    }
+    return bufferToBigInt(this.value);
   }
+
+  public toNumber() {
+    if (this.value == null || this.value.length === 0) {
+      return this._nullable ? null : 0;
+    }
+
+    const length = this.value.length;
+
+    if(length === 0) return 0; // todo: should this be nullable?
+    if(length === 1) return this.value[0];
+    if(length <= 6) return this.value.readUIntBE(0, length);
+    return Number(this.toBigInt());
+  }
+
+  public isNull() {
+    return super.isNull() || this.value.length === 0;
+  }
+
   valueOf(): bigint {
     const value = this.value;
     if (value === null) {
